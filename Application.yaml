@@ -1,0 +1,100 @@
+tosca_definitions_version: cloudify_dsl_1_2
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.3.1/types.yaml
+  - http://www.getcloudify.org/spec/fabric-plugin/1.3.1/plugin.yaml
+  - http://www.getcloudify.org/spec/openstack-plugin/1.3.1/plugin.yaml
+  - https://raw.githubusercontent.com/cloudify-examples/cloudify-proxy-plugin/master/plugin.yaml
+
+inputs:
+  application_network_name:
+    default: application-network
+    type: string
+
+  application_network_subnet_name:
+    default: application-network-subnet
+    type: string
+
+  image_id:
+    default:
+    type: string
+
+  flavor_id:
+    default:
+    type: string
+
+  lb_blueprint_id:
+      default: loadbalabcer
+      type: string
+      description: Load Balancer blueprint ID
+
+node_templates:
+
+# Create an Application Network
+  application_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      resource_id: { get_input: application_network_name }
+      use_external_resource : false
+
+  application_network_subnet:
+    type: cloudify.openstack.nodes.Subnet
+    properties:
+      resource_id: { get_input: application_network_subnet_name }
+      use_external_resource : false
+      subnet:
+        ip_version: 4
+        cidr: 10.20.0.0/29
+        gateway_ip: 10.20.0.1
+    relationships:
+      - target: application_network
+        type: cloudify.relationships.contained_in
+
+
+# Create an Application VM
+
+  appl_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      server:
+        image: { get_input: image_id }
+        flavor: { get_input: flavor_id }
+    relationships:
+      - target: application_network
+        type: cloudify.openstack.server_connected_to
+      - target: lb_proxy_deployment
+        type: cloudify.relationships.depends_on
+
+# Chain LB blueprint
+  lb_deployment:
+      type: cloudify.nodes.BlueprintDeployment
+      properties:
+        blueprint_id: { get_input: lb_blueprint_id }
+
+  lb_proxy_deployment:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+        inherit_outputs:
+            - 'lb_internal_ip'
+            - 'lb_network_id'
+    cloudify.interfaces.lifecycle:
+      create:
+        inputs:
+          deployment_id: { get_attribute: [ lb_deployment, deployment_id ]}
+      start:
+        inputs:
+          deployment_id: { get_attribute: [ lb_deployment, deployment_id ]}
+       stop:
+        inputs:
+          deployment_id: { get_attribute: [ lb_deployment, deployment_id ]}
+    relationships:
+         - target: lb_deployment
+           type: cloudify.relationships.depends_on
+
+  outputs:
+      lb_network_id:
+          value: { get_attribute: [ lb_proxy_deployment, lb_network_id ] }
+      application_network_id:
+          value: { get_property: [ application_network, resource_id ] }
+
+
